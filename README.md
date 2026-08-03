@@ -15,9 +15,9 @@ The thesis scope is restricted to RNA-seq analysis. RRBS and multi-omic integrat
 
 ## Workflow
 
-1. Quality control with FastQC.
-2. Adapter trimming and read filtering with fastp.
-3. Alignment to the mouse reference genome GRCm39 using STAR.
+1. Adapter trimming and read filtering with fastp.
+2. Alignment to the mouse reference genome GRCm39 using STAR.
+3. BAM indexing with samtools.
 4. Gene-level quantification with featureCounts and GENCODE vM33.
 5. Low-count filtering and variance-stabilizing transformation.
 6. Differential representation analysis with DESeq2.
@@ -33,22 +33,52 @@ The primary statistical contrast is **cocaine versus vehicle**. Following the re
 ├── config/
 │   └── samples.example.csv
 ├── scripts/
+│   ├── 00_generate_counts.sh
 │   └── 01_deseq2_analysis.R
 ├── results/                 # generated locally; not versioned
 ├── .gitignore
 └── README.md
 ```
 
+## Pipeline provenance
+
+The original local execution was divided into two shell scripts:
+
+- one script performed trimming and STAR alignment for samples `A2`, `A3`, `B3` and `B5`;
+- a second continuation script aligned any remaining trimmed reads and executed featureCounts.
+
+Both stages were necessary to reconstruct the complete route from paired FASTQ files to the `04_Counts/counts_matrix.txt` file consumed by R. They were therefore consolidated into `scripts/00_generate_counts.sh` rather than publishing an incomplete stage in isolation.
+
+The consolidated script preserves the effective parameters used locally:
+
+- paired-end fastp processing with automatic adapter detection;
+- STAR coordinate-sorted BAM output;
+- four processing threads by default;
+- a 2 GB STAR BAM sorting memory limit;
+- paired-end featureCounts quantification using `-p --countReadPairs`;
+- exon-level assignment grouped by `gene_id`;
+- GENCODE mouse vM33 annotation;
+- samples `A2`, `A3`, `B3` and `B5`.
+
+For disk management, trimmed FASTQ files are removed only after successful BAM generation. Set `KEEP_TRIMMED=1` to retain them.
+
 ## Input requirements
+
+The preprocessing script expects:
+
+- paired FASTQ files under `00_RawData`, named `<sample>_R1.fastq.gz` and `<sample>_R2.fastq.gz`;
+- a STAR index at `Ref_Genome_mm39/star_index`;
+- the annotation file `Ref_Genome_mm39/gencode.vM33.annotation.gtf`;
+- `fastp`, `STAR`, `samtools` and `featureCounts` available in `PATH`.
 
 The R script expects:
 
-- a featureCounts output file containing gene-level integer counts;
+- the featureCounts output containing gene-level integer counts;
 - a sample metadata CSV based on `config/samples.example.csv`;
 - R 4.5.x or a compatible release;
-- the packages listed in the installation command below.
+- the packages listed below.
 
-Raw FASTQ, BAM, genome indexes and unpublished primary data are intentionally excluded because of file size, privacy, provenance and publication constraints.
+Raw FASTQ, BAM, genome indexes and unpublished primary data are intentionally excluded because of file size, provenance and publication constraints.
 
 ## Installation
 
@@ -63,9 +93,24 @@ BiocManager::install(c("DESeq2", "org.Mm.eg.db", "AnnotationDbi"))
 
 ## Execution
 
+Generate the count matrix from raw paired-end reads:
+
+```bash
+bash scripts/00_generate_counts.sh
+```
+
+Optional environment variables can override local resources and paths:
+
+```bash
+THREADS=8 BAM_SORT_RAM=4000000000 KEEP_TRIMMED=1 \
+  bash scripts/00_generate_counts.sh
+```
+
+Run the statistical analysis:
+
 ```bash
 Rscript scripts/01_deseq2_analysis.R \
-  --counts data/counts_matrix.txt \
+  --counts 04_Counts/counts_matrix.txt \
   --metadata config/samples.csv \
   --output results
 ```
@@ -87,6 +132,8 @@ This repository does not redistribute raw sequencing data or third-party dataset
 ## Reproducibility and provenance
 
 The pipeline exports R session information with every run. For a frozen computational environment, create an `renv` lockfile from the validated analysis workstation before final publication.
+
+The shell pipeline is a cleaned consolidation of the scripts used during local processing. It preserves the effective tools, sample set, reference paths and quantification parameters, while adding validation and safe restart behavior. It has not been re-executed inside GitHub because the repository does not contain raw sequencing data or the reference genome.
 
 ## Citation
 
