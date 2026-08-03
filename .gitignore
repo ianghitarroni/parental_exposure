@@ -1,0 +1,34 @@
+# Raw and aligned sequencing data
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.bam
+*.bai
+*.sam
+
+# Reference genomes and indexes
+*.fa
+*.fasta
+*.fna
+*.gtf
+*.gff
+*.gff3
+STAR_index/
+genome_index/
+
+# Analysis inputs and generated results
+data/
+results/
+output/
+reports/
+*.rds
+*.RData
+*.Rhistory
+
+# Local environment
+.Rproj.user/
+renv/library/
+renv/staging/
+.DS_Store
+Thumbs.db
