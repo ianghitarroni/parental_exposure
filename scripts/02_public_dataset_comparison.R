@@ -130,6 +130,7 @@ if (nrow(gse75613_overlap) >= 2) {
 gse169632 <- read.csv2(
   args$`gse169632-table`,
   stringsAsFactors = FALSE,
+  dec = ".",
   check.names = TRUE
 )
 assert_columns(
