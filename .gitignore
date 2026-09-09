@@ -7,6 +7,15 @@
 *.bai
 *.sam
 
+# Pipeline working directories and generated evidence
+00_RawData/
+01_Trimmed/
+02_QC/
+03_Aligned_STAR/
+04_Counts/
+Ref_Genome_mm39/
+config/samples.csv
+
 # Reference genomes and indexes
 *.fa
 *.fasta
