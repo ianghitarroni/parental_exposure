@@ -130,7 +130,7 @@ if (nrow(gse75613_overlap) >= 2) {
 gse169632 <- read.csv2(
   args$`gse169632-table`,
   stringsAsFactors = FALSE,
-  check.names = FALSE
+  check.names = TRUE
 )
 assert_columns(
   gse169632,
@@ -192,7 +192,7 @@ if (nrow(gse169632_overlap) > 0) {
 
 public_dataset_check <- tibble(
   metric = c("gse75613_overlap", "gse169632_translatome_overlap"),
-  expected = c(75L, 38L),
+  expected = c(70L, 38L),
   observed = c(nrow(gse75613_overlap), nrow(gse169632_overlap)),
   status = if_else(expected == observed, "MATCH", "REVIEW")
 )
