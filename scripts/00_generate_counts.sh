@@ -89,6 +89,10 @@ for sample in "${SAMPLES[@]}"; do
     raw_r2="$DIR_RAW/${sample}_R2.fastq.gz"
     trim_r1="$DIR_TRIM/${sample}_trimmed_R1.fastq.gz"
     trim_r2="$DIR_TRIM/${sample}_trimmed_R2.fastq.gz"
+    raw_qc_r1="$DIR_QC/raw/${sample}_R1_fastqc.html"
+    raw_qc_r2="$DIR_QC/raw/${sample}_R2_fastqc.html"
+    trim_qc_r1="$DIR_QC/trimmed/${sample}_trimmed_R1_fastqc.html"
+    trim_qc_r2="$DIR_QC/trimmed/${sample}_trimmed_R2_fastqc.html"
     bam="$DIR_ALIGN/${sample}_Aligned.sortedByCoord.out.bam"
     prefix="$DIR_ALIGN/${sample}_"
     tmp_dir="$DIR_ALIGN/${sample}_STARtmp"
@@ -103,39 +107,46 @@ for sample in "${SAMPLES[@]}"; do
             "$DIR_QC/raw" \
             "$raw_r1" \
             "$raw_r2" \
-            "$DIR_QC/raw/${sample}_R1_fastqc.html" \
-            "$DIR_QC/raw/${sample}_R2_fastqc.html"
-    elif [[ ! -f "$bam" ]]; then
-        echo "ERROR: paired FASTQ files not found for $sample" >&2
-        exit 1
-    else
-        echo "WARNING: raw FASTQ files are unavailable; existing BAM will be reused" >&2
-    fi
+            "$raw_qc_r1" \
+            "$raw_qc_r2"
 
-    if [[ ! -f "$bam" ]]; then
+        # Generate filtered reads whenever alignment or post-filtering QC still
+        # needs them. This also reconstructs QC evidence when a BAM already
+        # exists from an earlier run.
         if [[ ! -f "$trim_r1" || ! -f "$trim_r2" ]]; then
-            echo "[2/4] Running fastp"
-            fastp \
-                -i "$raw_r1" \
-                -I "$raw_r2" \
-                -o "$trim_r1" \
-                -O "$trim_r2" \
-                -h "$DIR_QC/${sample}_fastp.html" \
-                -j "$DIR_QC/${sample}_fastp.json" \
-                --detect_adapter_for_pe \
-                -w "$THREADS"
+            if [[ ! -f "$bam" || ! -f "$trim_qc_r1" || ! -f "$trim_qc_r2" ]]; then
+                echo "[2/4] Running fastp"
+                fastp \
+                    -i "$raw_r1" \
+                    -I "$raw_r2" \
+                    -o "$trim_r1" \
+                    -O "$trim_r2" \
+                    -h "$DIR_QC/${sample}_fastp.html" \
+                    -j "$DIR_QC/${sample}_fastp.json" \
+                    --detect_adapter_for_pe \
+                    -w "$THREADS"
+            fi
         else
             echo "[2/4] Trimmed FASTQ files already exist"
         fi
 
-        echo "[3/4] Running FastQC on filtered reads"
-        run_fastqc_pair \
-            "$DIR_QC/trimmed" \
-            "$trim_r1" \
-            "$trim_r2" \
-            "$DIR_QC/trimmed/${sample}_trimmed_R1_fastqc.html" \
-            "$DIR_QC/trimmed/${sample}_trimmed_R2_fastqc.html"
+        if [[ -f "$trim_r1" && -f "$trim_r2" ]]; then
+            echo "[3/4] Running FastQC on filtered reads"
+            run_fastqc_pair \
+                "$DIR_QC/trimmed" \
+                "$trim_r1" \
+                "$trim_r2" \
+                "$trim_qc_r1" \
+                "$trim_qc_r2"
+        fi
+    elif [[ ! -f "$bam" ]]; then
+        echo "ERROR: paired FASTQ files not found for $sample" >&2
+        exit 1
+    else
+        echo "WARNING: raw FASTQ files are unavailable; existing BAM will be reused and missing FastQC evidence cannot be regenerated" >&2
+    fi
 
+    if [[ ! -f "$bam" ]]; then
         echo "[4/4] Running STAR"
         rm -rf "$tmp_dir"
         STAR \
@@ -151,18 +162,18 @@ for sample in "${SAMPLES[@]}"; do
             --outTmpDir "$tmp_dir"
 
         samtools index "$bam"
-
-        # The original execution removed trimmed FASTQ files after successful
-        # alignment to reduce local disk usage. Set KEEP_TRIMMED=1 to retain them.
-        if [[ "${KEEP_TRIMMED:-0}" != "1" ]]; then
-            rm -f "$trim_r1" "$trim_r2"
-        fi
         rm -rf "$tmp_dir"
     else
-        echo "Existing BAM found; skipping fastp and STAR"
+        echo "Existing BAM found; skipping STAR"
         if [[ ! -f "${bam}.bai" ]]; then
             samtools index "$bam"
         fi
+    fi
+
+    # The original execution removed trimmed FASTQ files after successful
+    # alignment to reduce local disk usage. Set KEEP_TRIMMED=1 to retain them.
+    if [[ -f "$bam" && "${KEEP_TRIMMED:-0}" != "1" ]]; then
+        rm -f "$trim_r1" "$trim_r2"
     fi
 done
 
