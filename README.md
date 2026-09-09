@@ -97,7 +97,7 @@ The consolidated script retains the effective parameters documented in the origi
 - STAR coordinate-sorted BAM output;
 - four processing threads by default;
 - a 2 GB STAR BAM sorting memory limit;
-- paired-end featureCounts quantification using `-p --countReadPairs`;
+- paired-end featureCounts quantification using the historical `-p` invocation;
 - exon-level assignment grouped by `gene_id`;
 - GENCODE mouse vM33 annotation;
 - samples `A2`, `A3`, `B3` and `B5`.
@@ -186,6 +186,8 @@ The preprocessing stage retains:
 - STAR logs for each sample;
 - the featureCounts assignment summary;
 - `02_QC/software_versions.tsv` with command-line tool versions and reference identifiers.
+
+The archived manuscript matrix records featureCounts v2.0.6 with `-p -t exon -g gene_id`. Exact reproduction must retain that invocation. Adding `--countReadPairs` or changing the featureCounts release must be treated as a new quantification and validated separately.
 
 The R stage exports:
 
