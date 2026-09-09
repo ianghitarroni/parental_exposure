@@ -6,6 +6,7 @@ set -euo pipefail
 
 DIR_RAW="${DIR_RAW:-00_RawData}"
 DIR_TRIM="${DIR_TRIM:-01_Trimmed}"
+DIR_QC="${DIR_QC:-02_QC}"
 DIR_ALIGN="${DIR_ALIGN:-03_Aligned_STAR}"
 DIR_COUNTS="${DIR_COUNTS:-04_Counts}"
 DIR_GENOME="${DIR_GENOME:-Ref_Genome_mm39}"
@@ -16,9 +17,14 @@ BAM_SORT_RAM="${BAM_SORT_RAM:-2000000000}"
 
 SAMPLES=("A2" "A3" "B3" "B5")
 
-mkdir -p "$DIR_TRIM" "$DIR_ALIGN" "$DIR_COUNTS"
+mkdir -p \
+    "$DIR_TRIM" \
+    "$DIR_QC/raw" \
+    "$DIR_QC/trimmed" \
+    "$DIR_ALIGN" \
+    "$DIR_COUNTS"
 
-for command in fastp STAR samtools featureCounts; do
+for command in fastqc fastp STAR samtools featureCounts; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "ERROR: required command not found: $command" >&2
         exit 1
@@ -35,6 +41,49 @@ if [[ ! -f "$GTF_FILE" ]]; then
     exit 1
 fi
 
+capture_version() {
+    local tool="$1"
+    shift
+    local version
+    version="$("$@" 2>&1)"
+    version="${version%%$'\n'*}"
+    version="${version//$'\t'/ }"
+    printf '%s\t%s\n' "$tool" "$version"
+}
+
+{
+    printf 'item\tvalue\n'
+    capture_version "FastQC" fastqc --version
+    capture_version "fastp" fastp --version
+    capture_version "STAR" STAR --version
+    capture_version "samtools" samtools --version
+    capture_version "featureCounts" featureCounts -v
+    printf 'reference_genome\tGRCm39/mm39\n'
+    printf 'annotation\tGENCODE vM33\n'
+    printf 'star_index\t%s\n' "$STAR_INDEX"
+    printf 'gtf_file\t%s\n' "$GTF_FILE"
+    printf 'threads\t%s\n' "$THREADS"
+    printf 'run_started_utc\t%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+} > "$DIR_QC/software_versions.tsv"
+
+run_fastqc_pair() {
+    local output_dir="$1"
+    local read_1="$2"
+    local read_2="$3"
+    local report_1="$4"
+    local report_2="$5"
+
+    if [[ -f "$report_1" && -f "$report_2" ]]; then
+        echo "FastQC reports already exist: $report_1, $report_2"
+        return
+    fi
+
+    fastqc \
+        --threads "$THREADS" \
+        --outdir "$output_dir" \
+        "$read_1" "$read_2"
+}
+
 for sample in "${SAMPLES[@]}"; do
     raw_r1="$DIR_RAW/${sample}_R1.fastq.gz"
     raw_r2="$DIR_RAW/${sample}_R2.fastq.gz"
@@ -48,28 +97,46 @@ for sample in "${SAMPLES[@]}"; do
     echo "Processing sample: $sample"
     echo "========================================================"
 
+    if [[ -f "$raw_r1" && -f "$raw_r2" ]]; then
+        echo "[1/4] Running FastQC on raw reads"
+        run_fastqc_pair \
+            "$DIR_QC/raw" \
+            "$raw_r1" \
+            "$raw_r2" \
+            "$DIR_QC/raw/${sample}_R1_fastqc.html" \
+            "$DIR_QC/raw/${sample}_R2_fastqc.html"
+    elif [[ ! -f "$bam" ]]; then
+        echo "ERROR: paired FASTQ files not found for $sample" >&2
+        exit 1
+    else
+        echo "WARNING: raw FASTQ files are unavailable; existing BAM will be reused" >&2
+    fi
+
     if [[ ! -f "$bam" ]]; then
         if [[ ! -f "$trim_r1" || ! -f "$trim_r2" ]]; then
-            if [[ ! -f "$raw_r1" || ! -f "$raw_r2" ]]; then
-                echo "ERROR: paired FASTQ files not found for $sample" >&2
-                exit 1
-            fi
-
-            echo "[1/3] Running fastp"
+            echo "[2/4] Running fastp"
             fastp \
                 -i "$raw_r1" \
                 -I "$raw_r2" \
                 -o "$trim_r1" \
                 -O "$trim_r2" \
-                -h "$DIR_TRIM/${sample}_fastp.html" \
-                -j "$DIR_TRIM/${sample}_fastp.json" \
+                -h "$DIR_QC/${sample}_fastp.html" \
+                -j "$DIR_QC/${sample}_fastp.json" \
                 --detect_adapter_for_pe \
                 -w "$THREADS"
         else
-            echo "[1/3] Trimmed FASTQ files already exist"
+            echo "[2/4] Trimmed FASTQ files already exist"
         fi
 
-        echo "[2/3] Running STAR"
+        echo "[3/4] Running FastQC on filtered reads"
+        run_fastqc_pair \
+            "$DIR_QC/trimmed" \
+            "$trim_r1" \
+            "$trim_r2" \
+            "$DIR_QC/trimmed/${sample}_trimmed_R1_fastqc.html" \
+            "$DIR_QC/trimmed/${sample}_trimmed_R2_fastqc.html"
+
+        echo "[4/4] Running STAR"
         rm -rf "$tmp_dir"
         STAR \
             --runThreadN "$THREADS" \
@@ -85,21 +152,21 @@ for sample in "${SAMPLES[@]}"; do
 
         samtools index "$bam"
 
-        # The original execution removed trimmed FASTQ files after a successful
+        # The original execution removed trimmed FASTQ files after successful
         # alignment to reduce local disk usage. Set KEEP_TRIMMED=1 to retain them.
         if [[ "${KEEP_TRIMMED:-0}" != "1" ]]; then
             rm -f "$trim_r1" "$trim_r2"
         fi
         rm -rf "$tmp_dir"
     else
-        echo "[1-2/3] Existing BAM found; skipping trimming and alignment"
+        echo "Existing BAM found; skipping fastp and STAR"
         if [[ ! -f "${bam}.bai" ]]; then
             samtools index "$bam"
         fi
     fi
 done
 
-echo "[3/3] Running featureCounts"
+echo "Running featureCounts"
 bam_files=()
 for sample in "${SAMPLES[@]}"; do
     bam="$DIR_ALIGN/${sample}_Aligned.sortedByCoord.out.bam"
@@ -121,3 +188,4 @@ featureCounts \
     "${bam_files[@]}"
 
 echo "Pipeline completed: $DIR_COUNTS/counts_matrix.txt"
+echo "QC reports: $DIR_QC"
