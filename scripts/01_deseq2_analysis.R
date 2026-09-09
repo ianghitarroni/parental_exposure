@@ -200,7 +200,7 @@ results_table <- as.data.frame(res) %>%
   mutate(gene_id_clean = str_remove(gene_id, "\\.[0-9]+$")) %>%
   left_join(gene_annotations, by = "gene_id_clean")
 
-fallback_symbols <- AnnotationDbi::mapIds(
+orgdb_symbols <- AnnotationDbi::mapIds(
   org.Mm.eg.db::org.Mm.eg.db,
   keys = unique(results_table$gene_id_clean),
   keytype = "ENSEMBL",
@@ -210,9 +210,15 @@ fallback_symbols <- AnnotationDbi::mapIds(
 
 results_table <- results_table %>%
   mutate(
-    symbol_fallback = unname(fallback_symbols[gene_id_clean]),
-    symbol = coalesce(gene_name, symbol_fallback),
-    significant = !is.na(padj) & padj < 0.1 & abs(log2FoldChange) > 1,
+    gencode_symbol = gene_name,
+    symbol = unname(orgdb_symbols[gene_id_clean]),
+    statistically_significant = !is.na(padj) &
+      padj < 0.1 &
+      abs(log2FoldChange) > 1,
+    # The reference manuscript script maps Ensembl IDs with org.Mm.eg.db and
+    # then applies na.omit(). Keep that reported set explicit while retaining
+    # every statistically significant locus in the audit outputs.
+    significant = statistically_significant & !is.na(symbol) & symbol != "",
     direction = case_when(
       significant & log2FoldChange > 1 ~ "Higher_in_cocaine",
       significant & log2FoldChange < -1 ~ "Lower_in_cocaine",
@@ -224,10 +230,13 @@ results_table <- results_table %>%
       TRUE ~ "Unknown"
     )
   ) %>%
-  dplyr::select(-gene_name, -symbol_fallback) %>%
+  dplyr::select(-gene_name) %>%
   arrange(padj)
 
+significant_loci_table <- results_table %>% filter(statistically_significant)
 significant_table <- results_table %>% filter(significant)
+excluded_unmapped_table <- results_table %>%
+  filter(statistically_significant, !significant)
 
 write.csv(
   results_table,
@@ -237,6 +246,16 @@ write.csv(
 write.csv(
   significant_table,
   file.path(args$output, "deseq2_significant_transcripts.csv"),
+  row.names = FALSE
+)
+write.csv(
+  significant_loci_table,
+  file.path(args$output, "deseq2_significant_loci_before_symbol_mapping.csv"),
+  row.names = FALSE
+)
+write.csv(
+  excluded_unmapped_table,
+  file.path(args$output, "excluded_unmapped_significant_loci.csv"),
   row.names = FALSE
 )
 writeLines(
@@ -314,14 +333,14 @@ volcano_data <- results_table %>%
     ),
     label = if_else(
       significant,
-      coalesce(symbol, gene_id_clean),
+      symbol,
       NA_character_
     )
   )
 
 volcano_plot <- ggplot(
   volcano_data,
-  aes(log2FoldChange, -log10(plot_padj), color = significant)
+  aes(log2FoldChange, -log10(plot_padj), color = statistically_significant)
 ) +
   geom_point(alpha = 0.70, size = 1.7, na.rm = TRUE) +
   geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
@@ -420,6 +439,8 @@ if (length(significant_gene_ids) >= 2) {
 analysis_summary <- tibble(
   input_transcripts = input_transcripts,
   retained_after_count_filter = nrow(dds),
+  statistically_significant_loci = sum(results_table$statistically_significant),
+  excluded_unmapped_significant_loci = nrow(excluded_unmapped_table),
   significant_transcripts = sum(results_table$significant),
   higher_in_cocaine = sum(results_table$direction == "Higher_in_cocaine"),
   lower_in_cocaine = sum(results_table$direction == "Lower_in_cocaine"),
@@ -463,4 +484,3 @@ if (any(manuscript_result_check$status == "REVIEW")) {
 
 capture.output(sessionInfo(), file = file.path(args$output, "sessionInfo.txt"))
 message("Analysis completed. Results written to: ", normalizePath(args$output))
-
