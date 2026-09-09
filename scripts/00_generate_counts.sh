@@ -188,10 +188,12 @@ for sample in "${SAMPLES[@]}"; do
     bam_files+=("$bam")
 done
 
+# Exact invocation recorded in the archived manuscript count matrix generated
+# with featureCounts v2.0.6. Adding --countReadPairs would constitute a new
+# quantification and must not be mixed with the published analysis.
 featureCounts \
     -T "$THREADS" \
     -p \
-    --countReadPairs \
     -t exon \
     -g gene_id \
     -a "$GTF_FILE" \
